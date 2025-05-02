@@ -1,3 +1,4 @@
+import gc
 import os
 import numpy as np
 from time import time
@@ -91,10 +92,14 @@ class LATTICE(nn.Module):
             self.text_adj = build_sim(text_feats)
             self.text_adj = build_knn_neighbourhood(self.text_adj, topk=args.topk)   
 
-            
             learned_adj = weight[0] * self.image_adj + weight[1] * self.text_adj
             learned_adj = compute_normalized_laplacian(learned_adj)
             original_adj = weight[0] * self.image_original_adj + weight[1] * self.text_original_adj
+
+            del image_feats, text_feats, weight
+            torch.cuda.empty_cache()
+            print(f'Collected: {gc.collect()}')
+
             self.item_adj = (1 - args.lambda_coeff) * learned_adj + args.lambda_coeff * original_adj
         else:
             self.item_adj = self.item_adj.detach()

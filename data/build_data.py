@@ -3,6 +3,7 @@ import gzip
 import json
 import os
 from collections import defaultdict
+from typing import Any
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -10,9 +11,9 @@ from sentence_transformers import SentenceTransformer
 
 np.random.seed(123)
 
-folder = './sports/'
-name = 'Sports_and_Outdoors'
-bert_path = './sentence-bert/stsb-roberta-large/'
+folder = './data/video_games/'
+name = 'Video_Games'
+bert_path = './data/sentence-transformers/all-mpnet-base-v2/'
 bert_model = SentenceTransformer(bert_path)
 core = 5
 
@@ -24,6 +25,28 @@ def parse(path):
     g = gzip.open(path, 'r')
     for l in g:
         yield json.dumps(eval(l))
+
+objsByAsin : dict[str, list[Any]] = {}
+
+'''
+if not os.path.exists(folder + 'meta-data/' + "reviews_%s_%d.json.gz"%(name, core)):
+    with gzip.open(folder + 'meta-data/' + "reviews_%s_%d.json.gz" % (name, core), 'wt', encoding="utf-8") as f:
+        for l in parse(folder + 'meta-data/' + "reviews_%s_%d_Original.json.gz"%(name, core)):
+            obj = json.loads(l)
+
+            if obj['asin'] not in objsByAsin:
+                objsByAsin[obj['asin']] = []
+
+            objsByAsin[obj['asin']].append(obj)
+
+        for (_, objs) in objsByAsin.items():
+
+            def k(i):
+                return -int(i['unixReviewTime'])
+
+            for obj in sorted(objs, key=k)[:max(5, len(objs)//10)]:
+                f.write(json.dumps(obj) + '\n')
+''' 
 
 print("----------parse metadata----------")
 if not os.path.exists(folder + "meta-data/meta.json"):
@@ -78,7 +101,9 @@ train_json = {}
 val_json = {}
 test_json = {}
 for u, items in ui.items():
-    if len(items) < 10:
+    if (len(items) < 5):
+        continue
+    elif len(items) < 10:
         testval = np.random.choice(len(items), 2, replace=False)
     else:
         testval = np.random.choice(len(items), int(len(items) * 0.2), replace=False)

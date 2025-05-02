@@ -1,10 +1,11 @@
 import datetime
+import gc
 import math
 import os
 import random
 import sys
 from time import time
-from tqdm import tqdm
+# from tqdm import tqdm
 
 import numpy as np
 import torch
@@ -47,6 +48,8 @@ class Trainer(object):
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.lr_scheduler = self.set_lr_scheduler()
 
+        print('End of Trainer ctr.')
+
     def set_lr_scheduler(self):
         fac = lambda epoch: 0.96 ** (epoch / 50)
         scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=fac)
@@ -68,14 +71,34 @@ class Trainer(object):
 
         n_batch = data_generator.n_train // args.batch_size + 1
         best_recall = 0
+
+        print(f'Batch size: {args.batch_size}')
+        print(f'Epoch count: {args.epoch}')
+        print(f'Collected: {gc.collect()}')
+
+
         for epoch in (range(args.epoch)):
+            
+            if os.path.exists('../models/stop_signal.txt'):
+                print('Stop signal detected. Stopping training.')
+                break            
+
             t1 = time()
             loss, mf_loss, emb_loss, reg_loss = 0., 0., 0., 0.
             n_batch = data_generator.n_train // args.batch_size + 1
-            f_time, b_time, loss_time, opt_time, clip_time, emb_time = 0., 0., 0., 0., 0., 0.
+            
+            #f_time, b_time, loss_time, opt_time, clip_time, emb_time = 0., 0., 0., 0., 0., 0.
+            
             sample_time = 0.
             build_item_graph = True
+
+            print(f'Batch count: {n_batch}')
+
             for idx in (range(n_batch)):
+
+                if idx % 10 == 0 or idx == n_batch - 1 or idx < 3:
+                    print(f'Begin batch {idx}')
+
                 self.model.train()
                 self.optimizer.zero_grad()
                 sample_t1 = time()
@@ -94,6 +117,12 @@ class Trainer(object):
                 batch_loss = batch_mf_loss + batch_emb_loss + batch_reg_loss
 
                 batch_loss.backward(retain_graph=True)
+
+    
+                del ua_embeddings, ia_embeddings, u_g_embeddings, neg_i_g_embeddings, pos_i_g_embeddings
+                torch.cuda.empty_cache()
+                #print(f'Collected: {gc.collect()}')
+
                 self.optimizer.step()
 
                 loss += float(batch_loss)
@@ -104,7 +133,7 @@ class Trainer(object):
 
             self.lr_scheduler.step()
 
-            del ua_embeddings, ia_embeddings, u_g_embeddings, neg_i_g_embeddings, pos_i_g_embeddings
+            # del ua_embeddings, ia_embeddings, u_g_embeddings, neg_i_g_embeddings, pos_i_g_embeddings
 
             if math.isnan(loss) == True:
                 print('ERROR: loss is nan.')
@@ -117,7 +146,6 @@ class Trainer(object):
 
             if epoch % args.verbose != 0:
                 continue
-
 
             t2 = time()
             users_to_test = list(data_generator.test_set.keys())
@@ -182,7 +210,7 @@ class Trainer(object):
             np.vstack((sparse_mx.row, sparse_mx.col)).astype(np.int64))
         values = torch.from_numpy(sparse_mx.data)
         shape = torch.Size(sparse_mx.shape)
-        return torch.sparse.FloatTensor(indices, values, shape)
+        return torch.sparse_coo_tensor(indices, values, shape, dtype= torch.float32)
 
 def set_seed(seed):
     np.random.seed(seed)
@@ -193,6 +221,7 @@ def set_seed(seed):
 if __name__ == '__main__':
     set_seed(args.seed)
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
     config = dict()
     config['n_users'] = data_generator.n_users
@@ -202,5 +231,17 @@ if __name__ == '__main__':
     config['norm_adj'] = norm_adj
 
     trainer = Trainer(data_config=config)
-    trainer.train()
 
+    model_path = f'../models/{args.model_name}.pth'
+
+    if os.path.exists(model_path):
+        trainer.model.load_state_dict(torch.load(model_path))
+        print(f'Model loaded from {model_path}')
+    else:
+        trainer.train()
+
+        if not os.path.exists('../models'):
+            os.makedirs('../models')
+
+        torch.save(trainer.model.state_dict(), model_path)
+        print(f'Model saved to {model_path}')
